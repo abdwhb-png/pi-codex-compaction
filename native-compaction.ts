@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import {
 	buildSessionContext,
+	buildSessionProjection,
 	convertToLlm,
-	sessionEntryToContextMessages,
 	type SessionEntry,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { calculateCost, type Message, type Model, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, type Message, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
 
 export const NATIVE_COMPACTION_KIND = "openai-codex-native-compaction";
 export const NATIVE_COMPACTION_VERSION = 1;
@@ -286,11 +286,6 @@ function messagesToResponseItems(model: Model<any>, messages: Message[], tools: 
 	return items;
 }
 
-function entriesToResponseItems(model: Model<any>, entries: SessionEntry[], tools: ToolInfo[]): ResponseItem[] {
-	const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
-	return messagesToResponseItems(model, convertToLlm(messages), tools);
-}
-
 export function effectiveInputForBranch(params: {
 	branch: SessionEntry[];
 	model: Model<any>;
@@ -315,10 +310,17 @@ export function effectiveInputForBranch(params: {
 		if (checkpoint.checkpoint.details.modelKey !== modelKey(params.model)) {
 			throw new Error("The latest OpenAI Codex native compaction checkpoint belongs to a different model.");
 		}
-		const tail = branch.slice(checkpoint.checkpoint.entryIndex + 1);
+		const projection = buildSessionProjection(branch);
+		const checkpointIndex = projection.entries.findIndex(
+			(entry) => entry.sourceEntry.id === checkpoint.checkpoint.entryId,
+		);
+		if (checkpointIndex < 0) {
+			throw new Error("The latest OpenAI Codex native compaction checkpoint is outside the active context.");
+		}
+		const tail = projection.entries.slice(checkpointIndex + 1).flatMap((entry) => entry.messages);
 		return [
 			...checkpoint.checkpoint.details.replacementHistory.map(cloneItem),
-			...entriesToResponseItems(params.model, tail, params.tools),
+			...messagesToResponseItems(params.model, convertToLlm(tail), params.tools),
 		];
 	}
 
@@ -480,10 +482,13 @@ export function mergeFeatureHeader(existing: string | null | undefined): string 
 
 export function buildCodexHeaders(params: {
 	apiKey: string;
-	headers?: Record<string, string>;
+	headers?: ProviderHeaders;
 	sessionId: string;
 }): Headers {
-	const headers = new Headers(params.headers);
+	const headers = new Headers();
+	for (const [name, value] of Object.entries(params.headers ?? {})) {
+		if (value !== null) headers.set(name, value);
+	}
 	headers.set("authorization", `Bearer ${params.apiKey}`);
 	headers.set("chatgpt-account-id", extractCodexAccountId(params.apiKey));
 	headers.set("originator", "pi");

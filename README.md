@@ -1,5 +1,8 @@
 # pi-codex-compaction
 
+This local fork starts from `@ogulcancelik/pi-codex-compaction` v0.1.4 (MIT, Can Celik).
+It follows the Pi v0.87.1 session projection API.
+
 > [!WARNING]
 > This extension is under active development. Its behavior and configuration may change.
 
